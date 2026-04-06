@@ -90,6 +90,10 @@ Home Assistant
 
 [MIT](LICENSE)
 
+## Disclaimer
+
+Dell, the Dell logo, iDRAC, PowerEdge, and Redfish are trademarks or registered trademarks of Dell Technologies Inc. or its subsidiaries. This project is not affiliated with, endorsed by, or sponsored by Dell Technologies Inc. All trademarks are the property of their respective owners.
+
 ---
 
 ## 正體中文版本
@@ -179,3 +183,7 @@ Home Assistant
 
 - **Redfish**：透過 HTTPS Basic Auth 讀取 system、manager、thermal、power 資料。
 - **IPMI**：透過純 Python RMCP+（AES-128-CBC + HMAC-SHA256/SHA1）送出 Dell OEM 原生命令進行風扇控制，不需外部二進位工具。
+
+## 免責聲明
+
+Dell、Dell 標誌、iDRAC、PowerEdge 及 Redfish 為 Dell Technologies Inc. 或其子公司的商標或註冊商標。本專案與 Dell Technologies Inc. 無任何關聯、背書或贊助關係。所有商標均為其各自所有者之財產。
