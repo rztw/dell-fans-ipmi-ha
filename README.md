@@ -1,5 +1,7 @@
 # Dell iDRAC Fan Control for Home Assistant
 
+[![ko-fi](https://ko-fi.com/img/githubbutton_sm.svg)](https://ko-fi.com/U7U21VQTGJ)
+
 A Home Assistant custom integration that lets you **monitor** and **control** Dell server fans through iDRAC, using Redfish for telemetry and pure-Python IPMI RMCP+ for fan commands — no `ipmitool` binary required.
 
 ## Features
@@ -24,6 +26,8 @@ A Home Assistant custom integration that lets you **monitor** and **control** De
 
 ### HACS (recommended)
 
+[![Open your Home Assistant instance and open a repository inside the Home Assistant Community Store.](https://my.home-assistant.io/badges/hacs_repository.svg)](https://my.home-assistant.io/redirect/hacs_repository/?owner=rztw&repository=dell-fans-ipmi-ha&category=integration)
+[![Open your Home Assistant instance and start setting up a new integration.](https://my.home-assistant.io/badges/config_flow_start.svg)](https://my.home-assistant.io/redirect/config_flow_start/?domain=dell_idrac_fan_control)
 1. Open **HACS** in Home Assistant.
 2. Click **Integrations** → **⋮** (top-right) → **Custom repositories**.
 3. Paste the repository URL and select category **Integration**.
@@ -116,6 +120,8 @@ Home Assistant
 
 ### 透過 HACS（建議）
 
+[![Open your Home Assistant instance and open a repository inside the Home Assistant Community Store.](https://my.home-assistant.io/badges/hacs_repository.svg)](https://my.home-assistant.io/redirect/hacs_repository/?owner=rztw&repository=dell-fans-ipmi-ha&category=integration)
+[![Open your Home Assistant instance and start setting up a new integration.](https://my.home-assistant.io/badges/config_flow_start.svg)](https://my.home-assistant.io/redirect/config_flow_start/?domain=dell_idrac_fan_control)
 1. 在 Home Assistant 開啟 **HACS**。
 2. 進入 **Integrations** → 右上角 **⋮** → **Custom repositories**。
 3. 貼上此專案的 repository URL，類型選擇 **Integration**。
