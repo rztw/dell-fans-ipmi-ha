@@ -1,0 +1,65 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Dell iDRAC Connection",
+        "description": "Enter the connection details for your Dell iDRAC.",
+        "data": {
+          "host": "Host / IP address",
+          "port": "Redfish port",
+          "username": "Username",
+          "password": "Password",
+          "ipmi_port": "IPMI port"
+        }
+      }
+    },
+    "error": {
+      "cannot_connect": "Failed to connect to iDRAC. Check host and port.",
+      "invalid_auth": "Invalid username or password.",
+      "unknown": "Unexpected error occurred."
+    },
+    "abort": {
+      "already_configured": "This iDRAC host is already configured."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Dell iDRAC Options",
+        "data": {
+          "scan_interval": "Scan interval (seconds)",
+          "base_path": "Redfish base path",
+          "allow_insecure_tls": "Allow insecure TLS (skip certificate verification)",
+          "timeout": "Redfish timeout (seconds)",
+          "ipmi_timeout": "IPMI timeout (seconds)"
+        }
+      }
+    }
+  },
+  "entity": {
+    "sensor": {
+      "model": { "name": "Model" },
+      "power_state": { "name": "Power State" },
+      "bios_version": { "name": "BIOS Version" },
+      "service_tag": { "name": "Service Tag" },
+      "cpu_model": { "name": "CPU Model" },
+      "total_memory_gib": { "name": "Total Memory" },
+      "idrac_firmware": { "name": "iDRAC Firmware" },
+      "power_consumed": { "name": "Power Consumption" },
+      "power_average": { "name": "Average Power" },
+      "power_peak": { "name": "Peak Power" }
+    },
+    "number": {
+      "fan_speed": { "name": "Fan Speed" }
+    },
+    "select": {
+      "fan_mode": {
+        "name": "Fan Mode",
+        "state": {
+          "auto": "Auto",
+          "manual": "Manual"
+        }
+      }
+    }
+  }
+}

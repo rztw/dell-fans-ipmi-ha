@@ -1,0 +1,65 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Dell iDRAC 連線設定",
+        "description": "請輸入 Dell iDRAC 的連線資訊。",
+        "data": {
+          "host": "主機位址 / IP",
+          "port": "Redfish 連接埠",
+          "username": "使用者名稱",
+          "password": "密碼",
+          "ipmi_port": "IPMI 連接埠"
+        }
+      }
+    },
+    "error": {
+      "cannot_connect": "無法連線至 iDRAC，請檢查主機位址與連接埠。",
+      "invalid_auth": "使用者名稱或密碼錯誤。",
+      "unknown": "發生未預期的錯誤。"
+    },
+    "abort": {
+      "already_configured": "此 iDRAC 主機已設定過。"
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Dell iDRAC 選項",
+        "data": {
+          "scan_interval": "輪詢間隔（秒）",
+          "base_path": "Redfish 基礎路徑",
+          "allow_insecure_tls": "允許不安全的 TLS（略過憑證驗證）",
+          "timeout": "Redfish 逾時（秒）",
+          "ipmi_timeout": "IPMI 逾時（秒）"
+        }
+      }
+    }
+  },
+  "entity": {
+    "sensor": {
+      "model": { "name": "型號" },
+      "power_state": { "name": "電源狀態" },
+      "bios_version": { "name": "BIOS 版本" },
+      "service_tag": { "name": "服務標籤" },
+      "cpu_model": { "name": "CPU 型號" },
+      "total_memory_gib": { "name": "總記憶體" },
+      "idrac_firmware": { "name": "iDRAC 韌體版本" },
+      "power_consumed": { "name": "功耗" },
+      "power_average": { "name": "平均功耗" },
+      "power_peak": { "name": "尖峰功耗" }
+    },
+    "number": {
+      "fan_speed": { "name": "風扇轉速" }
+    },
+    "select": {
+      "fan_mode": {
+        "name": "風扇模式",
+        "state": {
+          "auto": "自動",
+          "manual": "手動"
+        }
+      }
+    }
+  }
+}
