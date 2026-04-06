@@ -1,9 +1,10 @@
 {
   "domain": "dell_idrac_fan_control",
   "name": "Dell iDRAC Fan Control",
-  "codeowners": [],
+  "codeowners": ["@rztw"],
   "config_flow": true,
-  "documentation": "https://github.com/homeassistant/dell-fans-ipmi-ha",
+  "documentation": "https://github.com/rztw/dell-fans-ipmi-ha",
+  "issue_tracker": "https://github.com/rztw/dell-fans-ipmi-ha/issues",
   "iot_class": "local_polling",
   "requirements": [],
   "version": "1.0.0"
