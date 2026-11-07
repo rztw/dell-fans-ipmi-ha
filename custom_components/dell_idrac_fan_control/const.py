@@ -9,6 +9,15 @@ CONF_BASE_PATH = "base_path"
 CONF_ALLOW_INSECURE_TLS = "allow_insecure_tls"
 CONF_IPMI_PORT = "ipmi_port"
 CONF_IPMI_TIMEOUT = "ipmi_timeout"
+CONF_CONNECTION_MODE = "connection_mode"
+
+# Telemetry backend selection. iDRAC6 (11G) has no Redfish at all, so it must
+# use the IPMI-only backend; iDRAC7+ can use either.
+MODE_AUTO = "auto"
+MODE_REDFISH = "redfish"
+MODE_IPMI = "ipmi"
+CONNECTION_MODES = [MODE_AUTO, MODE_REDFISH, MODE_IPMI]
+DEFAULT_CONNECTION_MODE = MODE_AUTO
 
 DEFAULT_PORT = 443
 DEFAULT_USERNAME = "root"

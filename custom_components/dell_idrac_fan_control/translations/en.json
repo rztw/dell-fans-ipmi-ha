@@ -3,9 +3,10 @@
     "step": {
       "user": {
         "title": "Dell iDRAC Connection",
-        "description": "Enter the connection details for your Dell iDRAC.",
+        "description": "Enter the connection details for your Dell iDRAC. Connection mode: 'auto' probes Redfish then falls back to IPMI, 'redfish' is for iDRAC7/8/9, 'ipmi' is for iDRAC6 (11G).",
         "data": {
           "host": "Host / IP address",
+          "connection_mode": "Connection mode",
           "port": "Redfish port",
           "username": "Username",
           "password": "Password",
@@ -27,6 +28,7 @@
       "init": {
         "title": "Dell iDRAC Options",
         "data": {
+          "connection_mode": "Connection mode",
           "scan_interval": "Scan interval (seconds)",
           "base_path": "Redfish base path",
           "allow_insecure_tls": "Allow insecure TLS (skip certificate verification)",

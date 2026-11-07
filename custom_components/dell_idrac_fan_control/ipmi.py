@@ -27,6 +27,13 @@ _BMC_ADDR = 0x20
 _REMOTE_SWID = 0x81
 _DEFAULT_PRIV = 0x04
 
+# Largest chunk we ask for when walking SDR/FRU. iDRAC6 rejects anything that
+# would push the response payload past 24 bytes, so we shrink on 0xCA.
+_MAX_CHUNK = 0x16
+_CC_CANNOT_RETURN_BYTES = 0xCA
+_CC_DATA_NOT_PRESENT = 0xC9
+_CC_SENSOR_NOT_PRESENT = 0xCB
+
 DELL_SET_AUTO = bytes([0x30, 0x30, 0x01, 0x01])
 DELL_DISABLE_AUTO = bytes([0x30, 0x30, 0x01, 0x00])
 DELL_SET_SPEED_PREFIX = bytes([0x30, 0x30, 0x02, 0xFF])
@@ -93,12 +100,13 @@ def _parse_device_info(data: list[int]) -> dict[str, Any]:
             "product_id": None,
         }
     fw_major = data[2] & 0x7F
-    fw_minor = data[3]
+    # Firmware Revision 2 is BCD encoded (e.g. 0x92 -> 92, not 146).
+    fw_minor = f"{data[3] >> 4}{data[3] & 0x0F}"
     mfr = data[6] | (data[7] << 8) | (data[8] << 16)
     pid = data[9] | (data[10] << 8)
     return {
         "device_id": data[0],
-        "firmware_version": f"{fw_major}.{fw_minor:02d}",
+        "firmware_version": f"{fw_major}.{fw_minor}",
         "manufacturer_id": mfr,
         "product_id": pid,
     }
@@ -216,15 +224,152 @@ class _Session:
     async def command(
         self, net_fn: int, cmd: int, data: list[int], label: str
     ) -> dict[str, Any]:
+        resp = await self.command_raw(net_fn, cmd, data, label)
+        if resp["cc"] != 0:
+            raise IpmiError(f"{label}: completion 0x{resp['cc']:02x}")
+        return resp
+
+    async def command_raw(
+        self, net_fn: int, cmd: int, data: list[int], label: str = "command"
+    ) -> dict[str, Any]:
+        """Send a command and return the completion code without raising."""
         sq = self._seq
         payload = self._ipmi_payload(net_fn, cmd, data, sq)
         pkt = self._wrap(payload, _PAYLOAD_IPMI, True, True, self._bsid, self._out_seq)
         self._seq = (self._seq + 1) & 0x3F
         self._out_seq += 1
-        resp = await self._xfer(pkt, lambda m: self._parse_ipmi(m, sq, cmd), label)
-        if resp["cc"] != 0:
-            raise IpmiError(f"{label}: completion 0x{resp['cc']:02x}")
-        return resp
+        return await self._xfer(pkt, lambda m: self._parse_ipmi(m, sq, cmd), label)
+
+    # -- platform inventory (iDRAC6 / IPMI-only) ---------------------------
+
+    async def get_chassis_status(self) -> dict[str, Any]:
+        """Get Chassis Status (netfn 0x00, cmd 0x01)."""
+        resp = await self.command_raw(0x00, 0x01, [], "GetChassisStatus")
+        if resp["cc"] != 0 or not resp["data"]:
+            return {"power_on": None}
+        return {"power_on": bool(resp["data"][0] & 0x01)}
+
+    async def read_fru(self, fru_id: int = 0) -> bytes:
+        """Read a FRU inventory area and return its raw bytes.
+
+        The area reported by Get FRU Inventory Area Info is usually much larger
+        than the populated data (iDRAC6 reports 4 KiB), so we parse the common
+        header and only read up to the end of the last declared area.
+        """
+        info = await self.command_raw(0x0A, 0x10, [fru_id], "GetFRUInfo")
+        if info["cc"] != 0 or len(info["data"]) < 2:
+            raise IpmiError(f"GetFRUInfo: completion 0x{info['cc']:02x}")
+        area_size = info["data"][0] | (info["data"][1] << 8)
+
+        chunk_size = _MAX_CHUNK
+
+        async def _read(offset: int, count: int) -> bytes:
+            nonlocal chunk_size
+            out = bytearray()
+            while len(out) < count:
+                pos = offset + len(out)
+                want = min(chunk_size, count - len(out))
+                resp = await self.command_raw(
+                    0x0A,
+                    0x11,
+                    [fru_id, pos & 0xFF, (pos >> 8) & 0xFF, want],
+                    "ReadFRUData",
+                )
+                if resp["cc"] == _CC_CANNOT_RETURN_BYTES and chunk_size > 1:
+                    chunk_size //= 2
+                    continue
+                if resp["cc"] in (_CC_DATA_NOT_PRESENT, _CC_SENSOR_NOT_PRESENT):
+                    break
+                if resp["cc"] != 0 or not resp["data"]:
+                    raise IpmiError(f"ReadFRUData: completion 0x{resp['cc']:02x}")
+                got = resp["data"][0]
+                if got == 0:
+                    break
+                out.extend(resp["data"][1 : 1 + got])
+            return bytes(out)
+
+        header = await _read(0, 8)
+        if len(header) < 8:
+            return header
+
+        total = 8
+        for idx in (1, 2, 3, 4, 5):
+            area_off = header[idx] * 8
+            if area_off == 0:
+                continue
+            area_hdr = await _read(area_off, 2)
+            if len(area_hdr) < 2:
+                continue
+            total = max(total, area_off + area_hdr[1] * 8)
+
+        return await _read(0, min(total, area_size))
+
+    async def read_sdr_records(self) -> list[bytes]:
+        """Walk the SDR repository and return every raw record."""
+        info = await self.command_raw(0x0A, 0x20, [], "GetSDRRepoInfo")
+        if info["cc"] != 0 or len(info["data"]) < 3:
+            raise IpmiError(f"GetSDRRepoInfo: completion 0x{info['cc']:02x}")
+        count = info["data"][1] | (info["data"][2] << 8)
+
+        records: list[bytes] = []
+        record_id = 0
+        chunk_size = _MAX_CHUNK
+        while record_id != 0xFFFF and len(records) < max(count, 1) + 8:
+            resv = await self.command_raw(0x0A, 0x22, [], "ReserveSDRRepo")
+            if resv["cc"] != 0 or len(resv["data"]) < 2:
+                raise IpmiError(f"ReserveSDRRepo: completion 0x{resv['cc']:02x}")
+            resv_id = resv["data"][0] | (resv["data"][1] << 8)
+
+            buf = bytearray()
+            next_id = None
+            total = None
+            offset = 0
+            while total is None or offset < total:
+                resp = await self.command_raw(
+                    0x0A,
+                    0x23,
+                    [
+                        resv_id & 0xFF,
+                        (resv_id >> 8) & 0xFF,
+                        record_id & 0xFF,
+                        (record_id >> 8) & 0xFF,
+                        offset & 0xFF,
+                        chunk_size,
+                    ],
+                    "GetSDR",
+                )
+                if resp["cc"] == _CC_CANNOT_RETURN_BYTES and chunk_size > 1:
+                    # iDRAC6 caps the response payload at 24 bytes.
+                    chunk_size //= 2
+                    continue
+                if resp["cc"] != 0 or len(resp["data"]) < 2:
+                    raise IpmiError(f"GetSDR: completion 0x{resp['cc']:02x}")
+                if next_id is None:
+                    next_id = resp["data"][0] | (resp["data"][1] << 8)
+                chunk = bytes(resp["data"][2:])
+                if not chunk:
+                    break
+                buf.extend(chunk)
+                offset += len(chunk)
+                if total is None and len(buf) >= 5:
+                    total = 5 + buf[4]
+
+            if next_id is None or next_id == record_id:
+                break
+            records.append(bytes(buf))
+            record_id = next_id
+        return records
+
+    async def get_sensor_readings(
+        self, sensor_numbers: list[int]
+    ) -> dict[int, bytes]:
+        """Read every sensor in one session; skip unavailable sensors."""
+        out: dict[int, bytes] = {}
+        for number in sensor_numbers:
+            resp = await self.command_raw(0x04, 0x2D, [number], "GetSensorReading")
+            if resp["cc"] == 0 and resp["data"]:
+                out[number] = bytes(resp["data"])
+        return out
 
     # -- session establishment ---------------------------------------------
 
@@ -506,6 +651,98 @@ class IpmiClient:
 
     async def test_connection(self) -> dict[str, Any]:
         return await self.get_device_id()
+
+    async def read_static_platform(self) -> dict[str, Any]:
+        """Read the parts of the platform that never change: device ID, FRU
+        inventory and the SDR repository."""
+
+        async def _action(s: _Session) -> dict[str, Any]:
+            dev = await s.command(0x06, 0x01, [], "GetDeviceID")
+            device_id = _parse_device_info(dev["data"])
+
+            try:
+                fru = await s.read_fru(0)
+            except IpmiError:
+                fru = b""
+
+            try:
+                records = await s.read_sdr_records()
+            except IpmiError:
+                records = []
+
+            return {
+                "device_id": device_id,
+                "fru": fru,
+                "sdr_records": records,
+            }
+
+        return await self._with_session(_action)
+
+    async def read_sensor_snapshot(
+        self, sensor_numbers: list[int]
+    ) -> dict[str, Any]:
+        """Read every sensor plus chassis power state in one session."""
+
+        async def _action(s: _Session) -> dict[str, Any]:
+            try:
+                readings = await s.get_sensor_readings(sensor_numbers)
+            except IpmiError:
+                readings = {}
+
+            try:
+                chassis = await s.get_chassis_status()
+            except IpmiError:
+                chassis = {"power_on": None}
+
+            return {"readings": readings, "chassis": chassis}
+
+        return await self._with_session(_action)
+
+    async def read_platform(self) -> dict[str, Any]:
+        """Collect device ID, FRU inventory, SDR records and sensor readings.
+
+        Everything is gathered inside a single RMCP+ session, which matters on
+        iDRAC6 where each handshake is comparatively expensive.
+        """
+
+        async def _action(s: _Session) -> dict[str, Any]:
+            dev = await s.command(0x06, 0x01, [], "GetDeviceID")
+            device_id = _parse_device_info(dev["data"])
+
+            try:
+                fru = await s.read_fru(0)
+            except IpmiError:
+                fru = b""
+
+            try:
+                records = await s.read_sdr_records()
+            except IpmiError:
+                records = []
+
+            numbers: list[int] = []
+            for raw in records:
+                if len(raw) >= 8 and raw[3] in (0x01, 0x02):
+                    numbers.append(raw[7])
+
+            try:
+                readings = await s.get_sensor_readings(numbers)
+            except IpmiError:
+                readings = {}
+
+            try:
+                chassis = await s.get_chassis_status()
+            except IpmiError:
+                chassis = {"power_on": None}
+
+            return {
+                "device_id": device_id,
+                "fru": fru,
+                "sdr_records": records,
+                "readings": readings,
+                "chassis": chassis,
+            }
+
+        return await self._with_session(_action)
 
     # -- internal ----------------------------------------------------------
 
