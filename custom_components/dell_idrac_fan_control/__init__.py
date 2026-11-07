@@ -17,38 +17,72 @@ from homeassistant.core import HomeAssistant
 from .const import (
     CONF_ALLOW_INSECURE_TLS,
     CONF_BASE_PATH,
+    CONF_CONNECTION_MODE,
     CONF_IPMI_PORT,
     CONF_IPMI_TIMEOUT,
     DEFAULT_ALLOW_INSECURE_TLS,
     DEFAULT_BASE_PATH,
+    DEFAULT_CONNECTION_MODE,
     DEFAULT_IPMI_PORT,
     DEFAULT_IPMI_TIMEOUT,
     DEFAULT_PORT,
     DEFAULT_SCAN_INTERVAL,
     DEFAULT_TIMEOUT,
     DOMAIN,
+    MODE_AUTO,
+    MODE_REDFISH,
     PLATFORMS,
 )
 from .coordinator import FanControlCoordinator, TelemetryCoordinator
 from .ipmi import IpmiClient
-from .redfish import RedfishClient
+from .ipmi_telemetry import IpmiTelemetryClient
+from .redfish import RedfishClient, RedfishError
 
 _LOGGER = logging.getLogger(__name__)
+
+
+async def _build_telemetry_client(
+    hass: HomeAssistant, cfg: dict
+) -> RedfishClient | IpmiTelemetryClient:
+    """Pick the telemetry backend for this entry."""
+    mode = cfg.get(CONF_CONNECTION_MODE, DEFAULT_CONNECTION_MODE)
+
+    if mode in (MODE_AUTO, MODE_REDFISH):
+        redfish = RedfishClient(
+            host=cfg[CONF_HOST],
+            port=cfg.get(CONF_PORT, DEFAULT_PORT),
+            username=cfg[CONF_USERNAME],
+            password=cfg[CONF_PASSWORD],
+            base_path=cfg.get(CONF_BASE_PATH, DEFAULT_BASE_PATH),
+            timeout=cfg.get(CONF_TIMEOUT, DEFAULT_TIMEOUT),
+            allow_insecure_tls=cfg.get(
+                CONF_ALLOW_INSECURE_TLS, DEFAULT_ALLOW_INSECURE_TLS
+            ),
+        )
+        try:
+            await redfish.test_connection()
+            return redfish
+        except RedfishError as exc:
+            await redfish.close()
+            if mode == MODE_REDFISH:
+                raise
+            _LOGGER.debug("Redfish unavailable, falling back to IPMI: %s", exc)
+
+    ipmi = IpmiClient(
+        host=cfg[CONF_HOST],
+        ipmi_port=cfg.get(CONF_IPMI_PORT, DEFAULT_IPMI_PORT),
+        username=cfg[CONF_USERNAME],
+        password=cfg[CONF_PASSWORD],
+        timeout=cfg.get(CONF_IPMI_TIMEOUT, DEFAULT_IPMI_TIMEOUT),
+    )
+    return IpmiTelemetryClient(ipmi)
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Set up Dell iDRAC Fan Control from a config entry."""
     cfg = {**entry.data, **entry.options}
 
-    redfish = RedfishClient(
-        host=cfg[CONF_HOST],
-        port=cfg.get(CONF_PORT, DEFAULT_PORT),
-        username=cfg[CONF_USERNAME],
-        password=cfg[CONF_PASSWORD],
-        base_path=cfg.get(CONF_BASE_PATH, DEFAULT_BASE_PATH),
-        timeout=cfg.get(CONF_TIMEOUT, DEFAULT_TIMEOUT),
-        allow_insecure_tls=cfg.get(CONF_ALLOW_INSECURE_TLS, DEFAULT_ALLOW_INSECURE_TLS),
-    )
+    telemetry_client = await _build_telemetry_client(hass, cfg)
     ipmi = IpmiClient(
         host=cfg[CONF_HOST],
         ipmi_port=cfg.get(CONF_IPMI_PORT, DEFAULT_IPMI_PORT),
@@ -58,7 +92,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     )
 
     scan_interval = cfg.get(CONF_SCAN_INTERVAL, DEFAULT_SCAN_INTERVAL)
-    telemetry = TelemetryCoordinator(hass, redfish, scan_interval)
+    telemetry = TelemetryCoordinator(hass, telemetry_client, scan_interval)
     fan_control = FanControlCoordinator(hass, ipmi, scan_interval)
 
     await telemetry.async_config_entry_first_refresh()
@@ -66,7 +100,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     await fan_control.async_config_entry_first_refresh()
 
     hass.data.setdefault(DOMAIN, {})[entry.entry_id] = {
-        "redfish": redfish,
+        "telemetry_client": telemetry_client,
         "ipmi": ipmi,
         "telemetry": telemetry,
         "fan_control": fan_control,
@@ -89,5 +123,5 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     ok = await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
     if ok:
         data = hass.data[DOMAIN].pop(entry.entry_id)
-        await data["redfish"].close()
+        await data["telemetry_client"].close()
     return ok

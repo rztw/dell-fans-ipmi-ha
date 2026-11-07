@@ -3,24 +3,33 @@ from __future__ import annotations
 
 import logging
 from datetime import timedelta
-from typing import Any
+from typing import Any, Protocol
 
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 
 from .ipmi import IpmiClient, IpmiError
-from .redfish import RedfishClient, RedfishError
+from .ipmi_telemetry import IpmiTelemetryError
+from .redfish import RedfishError
 
 _LOGGER = logging.getLogger(__name__)
 
 
+class TelemetrySource(Protocol):
+    """Anything that can produce the shared telemetry payload."""
+
+    async def get_all_data(self) -> dict[str, Any]: ...
+
+    async def close(self) -> None: ...
+
+
 class TelemetryCoordinator(DataUpdateCoordinator[dict[str, Any]]):
-    """Fetches Redfish system / manager / thermal / power data."""
+    """Fetches system / manager / thermal / power data from Redfish or IPMI."""
 
     def __init__(
         self,
         hass: HomeAssistant,
-        client: RedfishClient,
+        client: TelemetrySource,
         scan_interval: int,
     ) -> None:
         super().__init__(
@@ -34,7 +43,7 @@ class TelemetryCoordinator(DataUpdateCoordinator[dict[str, Any]]):
     async def _async_update_data(self) -> dict[str, Any]:
         try:
             return await self.client.get_all_data()
-        except RedfishError as exc:
+        except (RedfishError, IpmiTelemetryError) as exc:
             raise UpdateFailed(str(exc)) from exc
 
 

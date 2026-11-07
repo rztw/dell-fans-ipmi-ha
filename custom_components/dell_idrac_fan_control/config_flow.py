@@ -21,10 +21,13 @@ from homeassistant.data_entry_flow import FlowResult
 from .const import (
     CONF_ALLOW_INSECURE_TLS,
     CONF_BASE_PATH,
+    CONF_CONNECTION_MODE,
     CONF_IPMI_PORT,
     CONF_IPMI_TIMEOUT,
+    CONNECTION_MODES,
     DEFAULT_ALLOW_INSECURE_TLS,
     DEFAULT_BASE_PATH,
+    DEFAULT_CONNECTION_MODE,
     DEFAULT_IPMI_PORT,
     DEFAULT_IPMI_TIMEOUT,
     DEFAULT_PORT,
@@ -32,7 +35,12 @@ from .const import (
     DEFAULT_TIMEOUT,
     DEFAULT_USERNAME,
     DOMAIN,
+    MODE_AUTO,
+    MODE_IPMI,
+    MODE_REDFISH,
 )
+from .ipmi import IpmiClient, IpmiError
+from .ipmi_telemetry import IpmiTelemetryClient, IpmiTelemetryError
 from .redfish import RedfishClient, RedfishError
 
 _LOGGER = logging.getLogger(__name__)
@@ -40,12 +48,47 @@ _LOGGER = logging.getLogger(__name__)
 USER_SCHEMA = vol.Schema(
     {
         vol.Required(CONF_HOST): str,
+        vol.Optional(CONF_CONNECTION_MODE, default=DEFAULT_CONNECTION_MODE): vol.In(
+            CONNECTION_MODES
+        ),
         vol.Optional(CONF_PORT, default=DEFAULT_PORT): vol.Coerce(int),
         vol.Required(CONF_USERNAME, default=DEFAULT_USERNAME): str,
         vol.Required(CONF_PASSWORD): str,
         vol.Optional(CONF_IPMI_PORT, default=DEFAULT_IPMI_PORT): vol.Coerce(int),
     }
 )
+
+
+async def _probe_redfish(user_input: dict[str, Any]) -> dict[str, Any] | None:
+    client = RedfishClient(
+        host=user_input[CONF_HOST],
+        port=user_input.get(CONF_PORT, DEFAULT_PORT),
+        username=user_input[CONF_USERNAME],
+        password=user_input[CONF_PASSWORD],
+    )
+    try:
+        return await client.test_connection()
+    except RedfishError as exc:
+        _LOGGER.debug("Redfish probe failed: %s", exc)
+        return None
+    finally:
+        await client.close()
+
+
+async def _probe_ipmi(user_input: dict[str, Any]) -> dict[str, Any] | None:
+    ipmi = IpmiClient(
+        host=user_input[CONF_HOST],
+        ipmi_port=user_input.get(CONF_IPMI_PORT, DEFAULT_IPMI_PORT),
+        username=user_input[CONF_USERNAME],
+        password=user_input[CONF_PASSWORD],
+        timeout=DEFAULT_IPMI_TIMEOUT,
+    )
+    telemetry = IpmiTelemetryClient(ipmi)
+    try:
+        return await telemetry.get_system_summary()
+    except (IpmiError, IpmiTelemetryError) as exc:
+        _LOGGER.debug("IPMI probe failed: %s", exc)
+        return None
 
 
 class DellIdracConfigFlow(ConfigFlow, domain=DOMAIN):
@@ -66,31 +109,28 @@ class DellIdracConfigFlow(ConfigFlow, domain=DOMAIN):
         errors: dict[str, str] = {}
 
         if user_input is not None:
-            client = RedfishClient(
-                host=user_input[CONF_HOST],
-                port=user_input.get(CONF_PORT, DEFAULT_PORT),
-                username=user_input[CONF_USERNAME],
-                password=user_input[CONF_PASSWORD],
-            )
-            try:
-                info = await client.test_connection()
-            except RedfishError as exc:
-                _LOGGER.debug("Connection test failed: %s", exc)
-                msg = str(exc)
-                if "401" in msg:
-                    errors["base"] = "invalid_auth"
-                else:
-                    errors["base"] = "cannot_connect"
-            except Exception:
-                _LOGGER.exception("Unexpected error during connection test")
-                errors["base"] = "unknown"
+            mode = user_input.get(CONF_CONNECTION_MODE, DEFAULT_CONNECTION_MODE)
+            info: dict[str, Any] | None = None
+            detected = mode
+
+            if mode in (MODE_AUTO, MODE_REDFISH):
+                info = await _probe_redfish(user_input)
+                if info is not None:
+                    detected = MODE_REDFISH
+
+            if info is None and mode in (MODE_AUTO, MODE_IPMI):
+                info = await _probe_ipmi(user_input)
+                if info is not None:
+                    detected = MODE_IPMI
+
+            if info is None:
+                errors["base"] = "cannot_connect"
             else:
                 await self.async_set_unique_id(user_input[CONF_HOST])
                 self._abort_if_unique_id_configured()
-                title = f"{info.get('model', 'Dell iDRAC')} ({user_input[CONF_HOST]})"
-                return self.async_create_entry(title=title, data=user_input)
-            finally:
-                await client.close()
+                data = {**user_input, CONF_CONNECTION_MODE: detected}
+                title = f"{info.get('model') or 'Dell iDRAC'} ({user_input[CONF_HOST]})"
+                return self.async_create_entry(title=title, data=data)
 
         return self.async_show_form(
             step_id="user", data_schema=USER_SCHEMA, errors=errors
@@ -111,6 +151,10 @@ class DellIdracOptionsFlow(OptionsFlow):
 
         schema = vol.Schema(
             {
+                vol.Optional(
+                    CONF_CONNECTION_MODE,
+                    default=cur.get(CONF_CONNECTION_MODE, DEFAULT_CONNECTION_MODE),
+                ): vol.In(CONNECTION_MODES),
                 vol.Optional(
                     CONF_SCAN_INTERVAL,
                     default=cur.get(CONF_SCAN_INTERVAL, DEFAULT_SCAN_INTERVAL),

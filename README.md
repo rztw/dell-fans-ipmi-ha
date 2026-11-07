@@ -9,18 +9,34 @@ A Home Assistant custom integration that lets you **monitor** and **control** De
 | Category | Details |
 |----------|---------|
 | **Telemetry (Redfish)** | System model, power state, BIOS version, service tag, CPU, memory, temperatures, fan RPM, power consumption, PSU voltages |
+| **Telemetry (IPMI)** | iDRAC6 / 11G fallback: model, service tag, host name, power state, fan RPM, temperatures, power draw, PSU voltage — read from the SDR repository and FRU inventory |
 | **Fan Control (IPMI)** | Switch between automatic and manual fan mode; set a fixed fan speed percentage (0–100 %) |
 | **Platforms** | `sensor`, `number` (fan speed slider), `select` (auto / manual mode) |
-| **Config Flow** | UI-based setup with connection validation |
-| **Options Flow** | Adjust scan interval, Redfish base path, TLS settings, timeouts after initial setup |
+| **Config Flow** | UI-based setup with connection validation and automatic backend detection |
+| **Options Flow** | Adjust connection mode, scan interval, Redfish base path, TLS settings, timeouts after initial setup |
 | **Localisation** | English, Traditional Chinese (zh-Hant) |
 
 ## Requirements
 
-- Dell server with **iDRAC** (tested on iDRAC 7/8/9)
-- Redfish API enabled (HTTPS, default port 443)
+- Dell server with **iDRAC** (tested on iDRAC 6/7/8/9)
+- Redfish API enabled (HTTPS, default port 443) — iDRAC7 and newer only
 - IPMI over LAN enabled (UDP, default port 623)
 - Home Assistant **2024.1** or later
+
+### iDRAC6 / 11th-generation PowerEdge
+
+iDRAC6 (R710, R510, R610, T610, …) has **no Redfish endpoint at all**, so the
+integration falls back to an IPMI-only telemetry backend. Set **Connection
+mode** to `ipmi` (or leave it on `auto`) and the integration will read the SDR
+repository and FRU inventory directly:
+
+- model, service tag, serial number and host name from FRU
+- fan RPM, temperatures, power draw and PSU voltage from SDR sensors
+- fan mode / speed control through the same Dell OEM IPMI commands
+
+BIOS version, CPU model and total memory are not exposed over IPMI on 11G, so
+those entities stay empty. iDRAC6 also caps IPMI response payloads at 24 bytes,
+which the SDR/FRU readers handle by shrinking their chunk size automatically.
 
 ## Installation
 
@@ -52,6 +68,7 @@ After setup, click **Configure** on the integration card to adjust:
 
 | Option | Default | Description |
 |--------|---------|-------------|
+| Connection mode | `auto` | `auto` probes Redfish then falls back to IPMI; `redfish` forces iDRAC7+; `ipmi` forces the iDRAC6 backend |
 | Scan interval | 30 s | How often to poll Redfish and probe IPMI |
 | Redfish base path | `/redfish/v1` | Override if your iDRAC uses a non-standard path |
 | Allow insecure TLS | Yes | Skip certificate verification (common for self-signed iDRAC certs) |
@@ -79,12 +96,14 @@ After setup, click **Configure** on the integration card to adjust:
 
 ```
 Home Assistant
-  ├── TelemetryCoordinator ──► Redfish HTTPS ──► iDRAC
+  ├── TelemetryCoordinator ──► Redfish HTTPS ──► iDRAC7/8/9
+  │                        └─► IPMI RMCP+ UDP ──► iDRAC6 (SDR + FRU)
   └── FanControlCoordinator ─► IPMI RMCP+ UDP ──► iDRAC
 ```
 
 - **Redfish** reads system, manager, thermal, and power data via HTTPS Basic Auth.
 - **IPMI** uses a pure-Python RMCP+ implementation (AES-128-CBC + HMAC-SHA256/SHA1) to send Dell OEM raw commands for fan control — no external binaries needed.
+- **IPMI telemetry** walks the SDR repository, decodes full sensor records (M/B/exponent conversion, linearisation) and parses the FRU inventory area. Static inventory is cached, so only sensor readings are polled after the first refresh.
 
 ## License
 
